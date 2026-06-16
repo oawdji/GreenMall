@@ -7,13 +7,16 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './modules/auth/auth.module';
 import { UserModule } from './modules/user/user.module';
+import { CategoryModule } from './modules/category/category.module';
+import { ProductModule } from './modules/product/product.module';
 
 @Module({
   imports: [
     // ===== 业务模块 =====
     AuthModule,
     UserModule,
-
+    CategoryModule,
+    ProductModule,
 
     // ===== 环境变量配置（全局可用） =====
     ConfigModule.forRoot({
