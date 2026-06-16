@@ -5,9 +5,16 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { AuthModule } from './modules/auth/auth.module';
+import { UserModule } from './modules/user/user.module';
 
 @Module({
   imports: [
+    // ===== 业务模块 =====
+    AuthModule,
+    UserModule,
+
+
     // ===== 环境变量配置（全局可用） =====
     ConfigModule.forRoot({
       isGlobal: true,
