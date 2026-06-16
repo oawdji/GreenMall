@@ -1,4 +1,4 @@
-import { Entity, Column, ManyToOne, OneToMany, Tree, TreeParent, TreeChildren } from 'typeorm';
+import { Entity, Column, Tree, TreeParent, TreeChildren } from 'typeorm';
 import { BaseEntity } from '../../../common/base.entity';
 
 /**
@@ -14,7 +14,7 @@ export class Category extends BaseEntity {
   @Column({ length: 100, nullable: true, comment: '分类图标' })
   icon: string;
 
-  @Column({ length: 500, nullable: true, comment: '分类图片' })
+  @Column({ type: 'text', nullable: true, comment: '分类图片 URL' })
   image: string;
 
   @Column({ type: 'int', default: 0, comment: '排序值（越小越靠前）' })

@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsInt, Min } from 'class-validator';
+import { IsOptional, IsString, IsInt, IsIn, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /**
@@ -19,7 +19,7 @@ export class QueryProductDto {
   sortBy?: string;
 
   @IsOptional()
-  @IsString({ message: '排序方向必须是 ASC 或 DESC' })
+  @IsIn(['ASC', 'DESC'], { message: '排序方向必须是 ASC 或 DESC' })
   sortOrder?: 'ASC' | 'DESC';
 
   @IsOptional()
@@ -31,6 +31,7 @@ export class QueryProductDto {
   @IsOptional()
   @IsInt({ message: '每页数量必须是整数' })
   @Min(1, { message: '每页至少 1 条' })
+  @Max(100, { message: '每页最多 100 条' })
   @Type(() => Number)
   limit?: number;
 }

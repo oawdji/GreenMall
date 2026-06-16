@@ -30,12 +30,23 @@ export class CategoryController {
   }
 
   /**
-   * 获取所有分类列表（公开接口）
+   * 获取所有分类列表（公开接口，仅返回启用的）
    * GET /api/categories
    */
   @Get()
   async findAll() {
     return this.categoryService.findAll();
+  }
+
+  /**
+   * 管理员 — 获取所有分类（含禁用）
+   * GET /api/categories/admin/all
+   */
+  @Get('admin/all')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin)
+  async adminFindAll() {
+    return this.categoryService.adminFindAll();
   }
 
   /**

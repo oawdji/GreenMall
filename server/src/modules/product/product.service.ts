@@ -2,9 +2,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, FindOptionsWhere } from 'typeorm';
 import { Product } from './entities/product.entity';
+import { ProductImage } from './entities/product-image.entity';
+import { Category } from '../category/entities/category.entity';
 import { CreateProductDto, ProductImageDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { QueryProductDto } from './dto/query-product.dto';
+
+/** 允许排序的字段白名单 */
+const ALLOWED_SORT_FIELDS = ['createdAt', 'price', 'salesCount', 'viewCount', 'stock'] as const;
 
 @Injectable()
 export class ProductService {
@@ -14,9 +19,26 @@ export class ProductService {
   ) {}
 
   /**
-   * 分页查询商品列表 + 搜索 + 筛选
+   * 公开 — 分页查询商品列表 + 搜索 + 筛选
    */
   async findAll(query: QueryProductDto) {
+    return this.queryProducts(query, { status: 'on' });
+  }
+
+  /**
+   * 管理员 — 所有商品列表（含下架/草稿）
+   */
+  async adminFindAll(query: QueryProductDto) {
+    return this.queryProducts(query, {});
+  }
+
+  /**
+   * 商品通用分页查询（内部方法）
+   */
+  private async queryProducts(
+    query: QueryProductDto,
+    extraWhere: FindOptionsWhere<Product>,
+  ) {
     const {
       keyword,
       categoryId,
@@ -27,9 +49,7 @@ export class ProductService {
     } = query;
 
     const where: FindOptionsWhere<Product>[] = [];
-
-    // 基础条件：只查上架商品
-    const baseWhere: FindOptionsWhere<Product> = { status: 'on' };
+    const baseWhere: FindOptionsWhere<Product> = { ...extraWhere };
 
     // 按分类筛选
     if (categoryId) {
@@ -45,8 +65,9 @@ export class ProductService {
     }
 
     // 排序字段白名单校验
-    const allowedSortFields = ['createdAt', 'price', 'salesCount', 'viewCount', 'stock'];
-    const sortField = allowedSortFields.includes(sortBy) ? sortBy : 'createdAt';
+    const sortField = (ALLOWED_SORT_FIELDS as readonly string[]).includes(sortBy)
+      ? sortBy
+      : 'createdAt';
     const order = sortOrder === 'ASC' ? 'ASC' : 'DESC';
 
     const [list, total] = await this.productRepository.findAndCount({
@@ -67,55 +88,7 @@ export class ProductService {
   }
 
   /**
-   * 管理员查询所有商品（含下架/草稿）
-   */
-  async adminFindAll(query: QueryProductDto) {
-    const {
-      keyword,
-      categoryId,
-      sortBy = 'createdAt',
-      sortOrder = 'DESC',
-      page = 1,
-      limit = 20,
-    } = query;
-
-    const where: FindOptionsWhere<Product>[] = [];
-    const baseWhere: FindOptionsWhere<Product> = {};
-
-    if (categoryId) {
-      baseWhere.category = { id: categoryId };
-    }
-
-    if (keyword) {
-      where.push({ ...baseWhere, name: Like(`%${keyword}%`) });
-      where.push({ ...baseWhere, description: Like(`%${keyword}%`) });
-    } else {
-      where.push(baseWhere);
-    }
-
-    const allowedSortFields = ['createdAt', 'price', 'salesCount', 'viewCount', 'stock'];
-    const sortField = allowedSortFields.includes(sortBy) ? sortBy : 'createdAt';
-    const order = sortOrder === 'ASC' ? 'ASC' : 'DESC';
-
-    const [list, total] = await this.productRepository.findAndCount({
-      where,
-      relations: { category: true },
-      order: { [sortField]: order },
-      skip: (page - 1) * limit,
-      take: limit,
-    });
-
-    return {
-      list,
-      total,
-      page,
-      limit,
-      totalPages: Math.ceil(total / limit),
-    };
-  }
-
-  /**
-   * 查询单个商品（公开）
+   * 公开 — 查询单个商品详情
    */
   async findOne(id: number): Promise<Product> {
     const product = await this.productRepository.findOne({
@@ -126,14 +99,15 @@ export class ProductService {
       throw new NotFoundException('商品不存在或已下架');
     }
 
-    // 增加浏览次数
+    // 增加浏览次数 — increment 后再手动 +1 保证返回最新值
     await this.productRepository.increment({ id }, 'viewCount', 1);
+    product.viewCount += 1;
 
     return product;
   }
 
   /**
-   * 管理员查询单个商品（含下架/草稿）
+   * 管理员 — 查询单个商品（含下架/草稿）
    */
   async adminFindOne(id: number): Promise<Product> {
     const product = await this.productRepository.findOne({
@@ -158,16 +132,11 @@ export class ProductService {
     });
 
     // 处理分类关联
-    if (categoryId) {
-      product.category = { id: categoryId } as any;
-    }
+    this.setCategory(product, categoryId);
 
     // 处理图片
     if (images && images.length > 0) {
-      product.images = images.map((img: ProductImageDto, index: number) => ({
-        url: img.url,
-        sort: img.sort ?? index,
-      })) as any;
+      product.images = this.buildImages(images);
     }
 
     return this.productRepository.save(product);
@@ -185,15 +154,12 @@ export class ProductService {
 
     // 处理分类关联
     if (categoryId !== undefined) {
-      product.category = categoryId ? ({ id: categoryId } as any) : (null as any);
+      this.setCategory(product, categoryId);
     }
 
     // 如果传了图片列表，替换全部图片
     if (images !== undefined) {
-      product.images = images.map((img: ProductImageDto, index: number) => ({
-        url: img.url,
-        sort: img.sort ?? index,
-      })) as any;
+      product.images = this.buildImages(images);
     }
 
     return this.productRepository.save(product);
@@ -219,5 +185,30 @@ export class ProductService {
 
     product.status = status;
     return this.productRepository.save(product);
+  }
+
+  // ===== 私有辅助方法 =====
+
+  /**
+   * 设置商品分类关联
+   */
+  private setCategory(product: Product, categoryId?: number | null): void {
+    if (categoryId) {
+      const category = new Category();
+      category.id = categoryId;
+      product.category = category;
+    } else {
+      product.category = null as unknown as Category;
+    }
+  }
+
+  /**
+   * 构建商品图片数据（TypeORM 级联保存时自动创建 ProductImage 实体）
+   */
+  private buildImages(images: ProductImageDto[]) {
+    return images.map((img, index) => ({
+      url: img.url,
+      sort: img.sort ?? index,
+    })) as ProductImage[];
   }
 }

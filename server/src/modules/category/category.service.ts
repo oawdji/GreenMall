@@ -21,12 +21,22 @@ export class CategoryService {
   }
 
   /**
-   * 获取扁平分类列表
+   * 公开 — 获取已启用的分类列表
    */
   async findAll(): Promise<Category[]> {
     return this.categoryRepository.find({
       where: { isActive: true },
       order: { sort: 'ASC' },
+    });
+  }
+
+  /**
+   * 管理员 — 获取全部分类（含禁用）
+   */
+  async adminFindAll(): Promise<Category[]> {
+    return this.categoryRepository.find({
+      order: { sort: 'ASC' },
+      relations: { parent: true },
     });
   }
 
@@ -50,16 +60,10 @@ export class CategoryService {
   async create(dto: CreateCategoryDto): Promise<Category> {
     const { parentId, ...data } = dto;
 
-    const category = this.categoryRepository.create(data as Partial<Category>);
+    const category = this.categoryRepository.create(data);
 
     if (parentId) {
-      const parent = await this.categoryRepository.findOne({
-        where: { id: parentId },
-      });
-      if (!parent) {
-        throw new BadRequestException('父分类不存在');
-      }
-      category.parent = parent;
+      category.parent = await this.findParentById(parentId);
     }
 
     return this.categoryRepository.save(category);
@@ -77,19 +81,12 @@ export class CategoryService {
 
     if (parentId !== undefined) {
       if (parentId === null || parentId === 0) {
-        // 移除父分类
         category.parent = null as unknown as Category;
       } else {
         if (parentId === id) {
           throw new BadRequestException('不能将分类设置为自己的子分类');
         }
-        const parent = await this.categoryRepository.findOne({
-          where: { id: parentId },
-        });
-        if (!parent) {
-          throw new BadRequestException('父分类不存在');
-        }
-        category.parent = parent;
+        category.parent = await this.findParentById(parentId);
       }
     }
 
@@ -111,5 +108,20 @@ export class CategoryService {
     }
 
     await this.categoryRepository.remove(category);
+  }
+
+  // ===== 私有辅助方法 =====
+
+  /**
+   * 根据 ID 查找父分类，找不到则抛异常
+   */
+  private async findParentById(parentId: number): Promise<Category> {
+    const parent = await this.categoryRepository.findOne({
+      where: { id: parentId },
+    });
+    if (!parent) {
+      throw new BadRequestException('父分类不存在');
+    }
+    return parent;
   }
 }

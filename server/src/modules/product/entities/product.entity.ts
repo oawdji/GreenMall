@@ -20,7 +20,7 @@ export class Product extends BaseEntity {
   @Column({ type: 'int', default: 0, comment: '库存数量' })
   stock: number;
 
-  @Column({ length: 500, nullable: true, comment: '商品主图 URL' })
+  @Column({ type: 'text', nullable: true, comment: '商品主图 URL' })
   coverImage: string;
 
   @Column({ default: 'draft', comment: '状态：draft 草稿 / on 上架 / off 下架' })

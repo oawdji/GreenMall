@@ -4,10 +4,10 @@ import {
   IsNumber,
   IsInt,
   IsBoolean,
+  IsIn,
   IsArray,
   Min,
   MaxLength,
-  ArrayMinSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
@@ -51,7 +51,7 @@ export class CreateProductDto {
   coverImage?: string;
 
   @IsOptional()
-  @IsString({ message: '状态必须是字符串' })
+  @IsIn(['draft', 'on', 'off'], { message: '状态值无效，支持的值：draft / on / off' })
   status?: string;
 
   @IsOptional()
