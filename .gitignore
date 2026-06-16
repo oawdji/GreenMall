@@ -17,6 +17,10 @@ dist/
 *.swp
 *.swo
 
+# 本地工具
+.history/
+.claude/settings.json
+
 # OS
 .DS_Store
 Thumbs.db
