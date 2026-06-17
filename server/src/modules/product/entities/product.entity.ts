@@ -2,6 +2,8 @@ import { Entity, Column, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
 import { BaseEntity } from '../../../common/base.entity';
 import { Category } from '../../category/entities/category.entity';
 import { ProductImage } from './product-image.entity';
+import { CartItem } from '../../order/entities/cart-item.entity';
+import { OrderItem } from '../../order/entities/order-item.entity';
 
 /**
  * 商品实体
@@ -51,13 +53,14 @@ export class Product extends BaseEntity {
   })
   images: ProductImage[];
 
-  // 预留关联
-  // @OneToMany(() => CartItem, (item) => item.product)
-  // cartItems: CartItem[];
-  //
-  // @OneToMany(() => OrderItem, (item) => item.product)
-  // orderItems: OrderItem[];
-  //
+  // 关联
+  @OneToMany(() => CartItem, (item) => item.product)
+  cartItems: CartItem[];
+
+  @OneToMany(() => OrderItem, (item) => item.product)
+  orderItems: OrderItem[];
+
+  // 预留
   // @OneToMany(() => Favorite, (fav) => fav.product)
   // favorites: Favorite[];
   //
