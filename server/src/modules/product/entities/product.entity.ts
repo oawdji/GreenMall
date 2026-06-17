@@ -4,6 +4,7 @@ import { Category } from '../../category/entities/category.entity';
 import { ProductImage } from './product-image.entity';
 import { CartItem } from '../../order/entities/cart-item.entity';
 import { OrderItem } from '../../order/entities/order-item.entity';
+import { Favorite } from '../../favorite/entities/favorite.entity';
 
 /**
  * 商品实体
@@ -60,9 +61,8 @@ export class Product extends BaseEntity {
   @OneToMany(() => OrderItem, (item) => item.product)
   orderItems: OrderItem[];
 
-  // 预留
-  // @OneToMany(() => Favorite, (fav) => fav.product)
-  // favorites: Favorite[];
+  @OneToMany(() => Favorite, (fav) => fav.product)
+  favorites: Favorite[];
   //
   // @OneToMany(() => Review, (review) => review.product)
   // reviews: Review[];
