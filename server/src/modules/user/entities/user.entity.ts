@@ -6,6 +6,7 @@ import { Order } from '../../order/entities/order.entity';
 import { CartItem } from '../../order/entities/cart-item.entity';
 import { Favorite } from '../../favorite/entities/favorite.entity';
 import { UserCoupon } from '../../coupon/entities/user-coupon.entity';
+import { Review } from '../../review/entities/review.entity';
 
 @Entity('users')
 export class User extends BaseEntity {
@@ -53,7 +54,7 @@ export class User extends BaseEntity {
 
   @OneToMany(() => UserCoupon, (uc) => uc.user)
   userCoupons: UserCoupon[];
-  //
-  // @OneToMany(() => Review, (review) => review.user)
-  // reviews: Review[];
+
+  @OneToMany(() => Review, (review) => review.user)
+  reviews: Review[];
 }
