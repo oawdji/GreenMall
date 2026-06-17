@@ -20,12 +20,18 @@ import { User } from '../user/entities/user.entity';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET') ?? 'default_secret',
-        signOptions: {
-          expiresIn: '7d' as const,
-        },
-      }),
+      useFactory: (configService: ConfigService) => {
+        const secret = configService.get<string>('JWT_SECRET');
+        if (!secret) {
+          throw new Error('JWT_SECRET 环境变量未配置，应用无法启动');
+        }
+        return {
+          secret,
+          signOptions: {
+            expiresIn: '7d' as const,
+          },
+        };
+      },
     }),
   ],
   controllers: [AuthController],

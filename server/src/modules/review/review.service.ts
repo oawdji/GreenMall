@@ -2,9 +2,10 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, DeepPartial } from 'typeorm';
 import { Review } from './entities/review.entity';
 import { Product } from '../product/entities/product.entity';
 import { Order, OrderStatus } from '../order/entities/order.entity';
@@ -107,14 +108,29 @@ export class ReviewService {
       throw new BadRequestException('购买后才能评价');
     }
 
-    const review = this.reviewRepository.create({
+    // 如果传入了 orderId，验证该订单属于当前用户且包含此商品
+    if (orderId) {
+      const orderValid = await this.validateOrderOwnership(
+        userId,
+        orderId,
+        productId,
+      );
+      if (!orderValid) {
+        throw new BadRequestException(
+          '订单不存在、不属于您或不包含该商品',
+        );
+      }
+    }
+
+    const reviewData: DeepPartial<Review> = {
       rating,
-      content: content ?? null,
-      images: images ?? null,
+      content: content ?? undefined,
+      images: images ?? undefined,
       user: { id: userId },
       product: { id: productId },
-      order: orderId ? { id: orderId } : null,
-    } as unknown as Review);
+      order: orderId ? { id: orderId } : undefined,
+    };
+    const review = this.reviewRepository.create(reviewData);
 
     const saved = await this.reviewRepository.save(review);
     return this.findOneOrFail(saved.id);
@@ -123,11 +139,15 @@ export class ReviewService {
   /**
    * 编辑评价 — 校验所有权
    */
-  async update(id: number, userId: number, dto: UpdateReviewDto): Promise<Review> {
+  async update(
+    id: number,
+    userId: number,
+    dto: UpdateReviewDto,
+  ): Promise<Review> {
     const review = await this.findOneOrFail(id);
 
     if (review.user.id !== userId) {
-      throw new BadRequestException('只能编辑自己的评价');
+      throw new ForbiddenException('只能编辑自己的评价');
     }
 
     if (dto.rating !== undefined) review.rating = dto.rating;
@@ -144,7 +164,7 @@ export class ReviewService {
     const review = await this.findOneOrFail(id);
 
     if (review.user.id !== userId) {
-      throw new BadRequestException('只能删除自己的评价');
+      throw new ForbiddenException('只能删除自己的评价');
     }
 
     await this.reviewRepository.remove(review);
@@ -160,7 +180,13 @@ export class ReviewService {
       take: limit,
     });
 
-    return { list, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return {
+      list,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async adminRemove(id: number): Promise<void> {
@@ -185,13 +211,40 @@ export class ReviewService {
    * 验证用户是否购买过该商品
    * 查询状态为 paid / shipped / completed 且明细包含该商品的订单
    */
-  private async verifyPurchase(userId: number, productId: number): Promise<boolean> {
+  private async verifyPurchase(
+    userId: number,
+    productId: number,
+  ): Promise<boolean> {
     const count = await this.orderRepository
       .createQueryBuilder('order')
       .innerJoin('order.items', 'item')
       .where('order.user_id = :userId', { userId })
       .andWhere('item.product_id = :productId', { productId })
-      .andWhere('order.status IN (:...statuses)', { statuses: REVIEWABLE_STATUSES })
+      .andWhere('order.status IN (:...statuses)', {
+        statuses: REVIEWABLE_STATUSES,
+      })
+      .getCount();
+
+    return count > 0;
+  }
+
+  /**
+   * 验证订单是否属于当前用户且包含指定商品
+   */
+  private async validateOrderOwnership(
+    userId: number,
+    orderId: number,
+    productId: number,
+  ): Promise<boolean> {
+    const count = await this.orderRepository
+      .createQueryBuilder('order')
+      .innerJoin('order.items', 'item')
+      .where('order.id = :orderId', { orderId })
+      .andWhere('order.user_id = :userId', { userId })
+      .andWhere('item.product_id = :productId', { productId })
+      .andWhere('order.status IN (:...statuses)', {
+        statuses: REVIEWABLE_STATUSES,
+      })
       .getCount();
 
     return count > 0;

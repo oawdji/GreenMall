@@ -1,6 +1,11 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ConflictException,
+  ForbiddenException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, QueryFailedError } from 'typeorm';
 import { Favorite } from './entities/favorite.entity';
 import { Product } from '../product/entities/product.entity';
 import { AddFavoriteDto } from './dto/add-favorite.dto';
@@ -36,7 +41,7 @@ export class FavoriteService {
   }
 
   /**
-   * 添加收藏 — 校验商品上架 + 防止重复收藏
+   * 添加收藏 — 校验商品上架 + 防止重复收藏（try/catch 处理并发冲突）
    */
   async add(userId: number, dto: AddFavoriteDto): Promise<Favorite> {
     const { productId } = dto;
@@ -62,21 +67,44 @@ export class FavoriteService {
       product: { id: productId },
     });
 
-    const saved = await this.favoriteRepository.save(favorite);
+    try {
+      const saved = await this.favoriteRepository.save(favorite);
 
-    // 回查带关联数据
-    const result = await this.favoriteRepository.findOne({
-      where: { id: saved.id },
-      relations: { product: true },
-    });
-    return result!;
+      // 回查带关联数据
+      const result = await this.favoriteRepository.findOne({
+        where: { id: saved.id },
+        relations: { product: true },
+      });
+      return result!;
+    } catch (error: unknown) {
+      // 并发插入导致的唯一约束冲突
+      if (
+        error instanceof QueryFailedError &&
+        (error as QueryFailedError & { errno?: number }).errno === 1062
+      ) {
+        throw new ConflictException('该商品已在收藏列表中');
+      }
+      throw error;
+    }
   }
 
   /**
    * 取消收藏（按收藏记录 ID）— 校验所有权
    */
   async remove(id: number, userId: number): Promise<void> {
-    const favorite = await this.findOneOrFail(id, userId);
+    const favorite = await this.favoriteRepository.findOne({
+      where: { id },
+      relations: { product: true },
+    });
+
+    if (!favorite) {
+      throw new NotFoundException('收藏记录不存在');
+    }
+
+    if (favorite.user.id !== userId) {
+      throw new ForbiddenException('只能删除自己的收藏');
+    }
+
     await this.favoriteRepository.remove(favorite);
   }
 
@@ -93,21 +121,5 @@ export class FavoriteService {
       favorited: !!favorite,
       favoriteId: favorite?.id ?? null,
     };
-  }
-
-  // ===== 私有辅助 =====
-
-  /**
-   * 查找收藏记录并校验所有权
-   */
-  private async findOneOrFail(id: number, userId: number): Promise<Favorite> {
-    const favorite = await this.favoriteRepository.findOne({
-      where: { id, user: { id: userId } },
-      relations: { product: true },
-    });
-    if (!favorite) {
-      throw new NotFoundException('收藏记录不存在');
-    }
-    return favorite;
   }
 }

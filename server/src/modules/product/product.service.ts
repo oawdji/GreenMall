@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Like, FindOptionsWhere } from 'typeorm';
 import { Product } from './entities/product.entity';
@@ -9,7 +9,13 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { QueryProductDto } from './dto/query-product.dto';
 
 /** 允许排序的字段白名单 */
-const ALLOWED_SORT_FIELDS = ['createdAt', 'price', 'salesCount', 'viewCount', 'stock'] as const;
+const ALLOWED_SORT_FIELDS = [
+  'createdAt',
+  'price',
+  'salesCount',
+  'viewCount',
+  'stock',
+] as const;
 
 @Injectable()
 export class ProductService {
@@ -59,13 +65,18 @@ export class ProductService {
     // 关键词搜索
     if (keyword) {
       where.push({ ...baseWhere, name: Like(`%${keyword}%`) });
-      where.push({ ...baseWhere, description: Like(`%${keyword}%`) });
+      where.push({
+        ...baseWhere,
+        description: Like(`%${keyword}%`),
+      });
     } else {
       where.push(baseWhere);
     }
 
     // 排序字段白名单校验
-    const sortField = (ALLOWED_SORT_FIELDS as readonly string[]).includes(sortBy)
+    const sortField = (
+      ALLOWED_SORT_FIELDS as readonly string[]
+    ).includes(sortBy)
       ? sortBy
       : 'createdAt';
     const order = sortOrder === 'ASC' ? 'ASC' : 'DESC';
@@ -88,31 +99,30 @@ export class ProductService {
   }
 
   /**
-   * 公开 — 查询单个商品详情
+   * 公开 — 查询单个商品详情（含图片集）
    */
   async findOne(id: number): Promise<Product> {
+    // 先原子递增浏览次数
+    await this.productRepository.increment({ id, status: 'on' }, 'viewCount', 1);
+
     const product = await this.productRepository.findOne({
       where: { id, status: 'on' },
-      relations: { category: true },
+      relations: { category: true, images: true },
     });
     if (!product) {
       throw new NotFoundException('商品不存在或已下架');
     }
 
-    // 增加浏览次数 — increment 后再手动 +1 保证返回最新值
-    await this.productRepository.increment({ id }, 'viewCount', 1);
-    product.viewCount += 1;
-
     return product;
   }
 
   /**
-   * 管理员 — 查询单个商品（含下架/草稿）
+   * 管理员 — 查询单个商品（含下架/草稿 + 图片集）
    */
   async adminFindOne(id: number): Promise<Product> {
     const product = await this.productRepository.findOne({
       where: { id },
-      relations: { category: true },
+      relations: { category: true, images: true },
     });
     if (!product) {
       throw new NotFoundException('商品不存在');
@@ -180,7 +190,9 @@ export class ProductService {
     const product = await this.adminFindOne(id);
 
     if (!['draft', 'on', 'off'].includes(status)) {
-      throw new NotFoundException('商品状态无效，支持的值：draft / on / off');
+      throw new BadRequestException(
+        '商品状态无效，支持的值：draft / on / off',
+      );
     }
 
     product.status = status;
@@ -190,15 +202,19 @@ export class ProductService {
   // ===== 私有辅助方法 =====
 
   /**
-   * 设置商品分类关联
+   * 设置商品分类关联（显式处理 null / 0 / undefined）
    */
-  private setCategory(product: Product, categoryId?: number | null): void {
-    if (categoryId) {
+  private setCategory(
+    product: Product,
+    categoryId?: number | null,
+  ): void {
+    if (categoryId != null && categoryId > 0) {
       const category = new Category();
       category.id = categoryId;
       product.category = category;
     } else {
-      product.category = null as unknown as Category;
+      // category 字段允许 null（@ManyToOne nullable: true）
+      product.category = null!;
     }
   }
 
@@ -206,9 +222,12 @@ export class ProductService {
    * 构建商品图片数据（TypeORM 级联保存时自动创建 ProductImage 实体）
    */
   private buildImages(images: ProductImageDto[]) {
-    return images.map((img, index) => ({
-      url: img.url,
-      sort: img.sort ?? index,
-    })) as ProductImage[];
+    return images.map(
+      (img, index) =>
+        ({
+          url: img.url,
+          sort: img.sort ?? index,
+        }) as ProductImage,
+    );
   }
 }

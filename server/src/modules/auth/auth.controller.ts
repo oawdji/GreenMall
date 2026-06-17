@@ -5,6 +5,16 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { JwtAuthGuard } from './jwt-auth.guard';
 
+/** 已认证请求 — JWT 验证后 passport 将 payload 注入 req.user */
+interface AuthenticatedRequest extends Request {
+  user: {
+    id: number;
+    username: string;
+    role: string;
+    email: string;
+  };
+}
+
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -33,7 +43,7 @@ export class AuthController {
    */
   @UseGuards(JwtAuthGuard)
   @Get('profile')
-  async getProfile(@Req() req: Request) {
-    return (req as any).user;
+  async getProfile(@Req() req: AuthenticatedRequest) {
+    return req.user;
   }
 }

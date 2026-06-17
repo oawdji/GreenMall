@@ -1,6 +1,10 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, DataSource } from 'typeorm';
+import { TreeRepository } from 'typeorm';
 import { Category } from './entities/category.entity';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
@@ -9,15 +13,14 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 export class CategoryService {
   constructor(
     @InjectRepository(Category)
-    private readonly categoryRepository: Repository<Category>,
-    private readonly dataSource: DataSource,
+    private readonly categoryRepository: TreeRepository<Category>,
   ) {}
 
   /**
    * 获取分类树（完整树形结构）
    */
   async findTrees(): Promise<Category[]> {
-    return this.dataSource.manager.getTreeRepository(Category).findTrees();
+    return this.categoryRepository.findTrees();
   }
 
   /**
@@ -62,7 +65,7 @@ export class CategoryService {
 
     const category = this.categoryRepository.create(data);
 
-    if (parentId) {
+    if (parentId != null && parentId > 0) {
       category.parent = await this.findParentById(parentId);
     }
 
@@ -81,10 +84,13 @@ export class CategoryService {
 
     if (parentId !== undefined) {
       if (parentId === null || parentId === 0) {
-        category.parent = null as unknown as Category;
+        // @TreeParent 允许 null，取消父分类关联
+        category.parent = null!;
       } else {
         if (parentId === id) {
-          throw new BadRequestException('不能将分类设置为自己的子分类');
+          throw new BadRequestException(
+            '不能将分类设置为自己的子分类',
+          );
         }
         category.parent = await this.findParentById(parentId);
       }
@@ -100,9 +106,7 @@ export class CategoryService {
     const category = await this.findOne(id);
 
     // 检查是否有子分类
-    const descendants = await this.dataSource.manager
-      .getTreeRepository(Category)
-      .findDescendants(category);
+    const descendants = await this.categoryRepository.findDescendants(category);
     if (descendants.length > 1) {
       throw new BadRequestException('该分类下有子分类，无法删除');
     }

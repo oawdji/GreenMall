@@ -91,7 +91,6 @@ export class Order extends BaseEntity {
    */
   @OneToMany(() => OrderItem, (item) => item.order, {
     cascade: true,
-    eager: true,
   })
   items: OrderItem[];
 

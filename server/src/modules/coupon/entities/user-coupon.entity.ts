@@ -26,7 +26,7 @@ export class UserCoupon extends BaseEntity {
   @JoinColumn({ name: 'user_id' })
   user: User;
 
-  @ManyToOne(() => Coupon, { onDelete: 'CASCADE', eager: true })
+  @ManyToOne(() => Coupon, { onDelete: 'CASCADE' })
   @JoinColumn({ name: 'coupon_id' })
   coupon: Coupon;
 

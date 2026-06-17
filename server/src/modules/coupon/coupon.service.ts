@@ -4,7 +4,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, MoreThan, LessThanOrEqual, In } from 'typeorm';
+import { Repository, DataSource, DeepPartial, MoreThan, LessThanOrEqual, In } from 'typeorm';
 import { Coupon, CouponType } from './entities/coupon.entity';
 import { UserCoupon, UserCouponStatus } from './entities/user-coupon.entity';
 import { CreateCouponDto } from './dto/create-coupon.dto';
@@ -18,6 +18,7 @@ export class CouponService {
     private readonly couponRepository: Repository<Coupon>,
     @InjectRepository(UserCoupon)
     private readonly userCouponRepository: Repository<UserCoupon>,
+    private readonly dataSource: DataSource,
   ) {}
 
   // ========== 用户端 ==========
@@ -33,7 +34,10 @@ export class CouponService {
       .createQueryBuilder('coupon')
       .where('coupon.isActive = :isActive', { isActive: true })
       .andWhere('coupon.remainingQuantity > :qty', { qty: 0 })
-      .andWhere('(coupon.startDate IS NULL OR coupon.startDate <= :now)', { now })
+      .andWhere(
+        '(coupon.startDate IS NULL OR coupon.startDate <= :now)',
+        { now },
+      )
       .andWhere('(coupon.endDate IS NULL OR coupon.endDate >= :now)', { now });
 
     if (type) {
@@ -52,101 +56,126 @@ export class CouponService {
       .select('uc.coupon_id', 'couponId')
       .addSelect('COUNT(uc.id)', 'count')
       .where('uc.user_id = :userId', { userId })
-      .andWhere('uc.coupon_id IN (:...ids)', { ids: list.map((c) => c.id) })
+      .andWhere('uc.coupon_id IN (:...ids)', {
+        ids: list.map((c) => c.id),
+      })
       .groupBy('uc.coupon_id')
       .getRawMany();
 
-    const countMap = new Map(claimedCounts.map((r) => [r.couponId, Number(r.count)]));
+    const countMap = new Map(
+      claimedCounts.map((r) => [r.couponId, Number(r.count)]),
+    );
 
     const enriched = list.map((coupon) => ({
       ...coupon,
       userClaimedCount: countMap.get(coupon.id) || 0,
-      canClaim: (countMap.get(coupon.id) || 0) < coupon.perUserLimit,
+      canClaim:
+        (countMap.get(coupon.id) || 0) < coupon.perUserLimit,
     }));
 
-    return { list: enriched, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return {
+      list: enriched,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   /**
-   * 我的优惠券列表
+   * 我的优惠券列表（不再执行批量 UPDATE，改为查询时计算过期状态）
    */
   async findMyCoupons(userId: number, status?: UserCouponStatus) {
-    // 自动将已过期的标记为 expired
     const now = new Date();
-    await this.userCouponRepository
-      .createQueryBuilder()
-      .update(UserCoupon)
-      .set({ status: UserCouponStatus.Expired })
-      .where('status = :unused', { unused: UserCouponStatus.Unused })
-      .andWhere('coupon_id IN (SELECT id FROM coupons WHERE endDate IS NOT NULL AND endDate < :now)', {
-        now,
-      })
-      .andWhere('user_id = :userId', { userId })
-      .execute();
 
-    const where: Record<string, unknown> = { user: { id: userId } };
-    if (status) {
-      where.status = status;
-    }
-
-    return this.userCouponRepository.find({
-      where,
+    // 查询用户优惠券（由于移除了 eager:true，显式加载 coupon 关联）
+    const userCoupons = await this.userCouponRepository.find({
+      where: {
+        user: { id: userId },
+        ...(status ? { status } : {}),
+      },
       relations: { coupon: true },
       order: { createdAt: 'DESC' },
     });
+
+    // 在应用层计算过期状态（不再写入数据库）
+    return userCoupons.map((uc) => {
+      const isExpired =
+        uc.status === UserCouponStatus.Unused &&
+        uc.coupon?.endDate &&
+        uc.coupon.endDate < now;
+
+      return {
+        ...uc,
+        _isExpired: isExpired, // 前端可根据此字段提示"已过期"
+      };
+    });
   }
 
   /**
-   * 领取优惠券
+   * 领取优惠券（事务保护，防止并发超领）
    */
   async claim(userId: number, couponId: number): Promise<UserCoupon> {
-    const coupon = await this.couponRepository.findOne({ where: { id: couponId } });
-    if (!coupon) {
-      throw new NotFoundException('优惠券不存在');
-    }
+    return this.dataSource.transaction(async (manager) => {
+      // 事务内用悲观写锁读取优惠券，防并发超领
+      const coupon = await manager.findOne(Coupon, {
+        where: { id: couponId },
+        lock: { mode: 'pessimistic_write' },
+      });
 
-    // 校验券是否可用
-    if (!coupon.isActive) {
-      throw new BadRequestException('该优惠券已下架');
-    }
+      if (!coupon) {
+        throw new NotFoundException('优惠券不存在');
+      }
 
-    if (coupon.remainingQuantity <= 0) {
-      throw new BadRequestException('该优惠券已被领完');
-    }
+      // 校验券是否可用
+      if (!coupon.isActive) {
+        throw new BadRequestException('该优惠券已下架');
+      }
 
-    const now = new Date();
-    if (coupon.startDate && coupon.startDate > now) {
-      throw new BadRequestException('该优惠券尚未到领取时间');
-    }
-    if (coupon.endDate && coupon.endDate < now) {
-      throw new BadRequestException('该优惠券已过期');
-    }
+      if (coupon.remainingQuantity <= 0) {
+        throw new BadRequestException('该优惠券已被领完');
+      }
 
-    // 校验每人限领
-    const claimedCount = await this.userCouponRepository.count({
-      where: { user: { id: userId }, coupon: { id: couponId } },
-    });
-    if (claimedCount >= coupon.perUserLimit) {
-      throw new BadRequestException(
-        `该优惠券每人限领 ${coupon.perUserLimit} 张，您已领取 ${claimedCount} 张`,
+      const now = new Date();
+      if (coupon.startDate && coupon.startDate > now) {
+        throw new BadRequestException('该优惠券尚未到领取时间');
+      }
+      if (coupon.endDate && coupon.endDate < now) {
+        throw new BadRequestException('该优惠券已过期');
+      }
+
+      // 事务内校验每人限领（锁定后的最新数据）
+      const claimedCount = await manager.count(UserCoupon, {
+        where: { user: { id: userId }, coupon: { id: couponId } },
+      });
+      if (claimedCount >= coupon.perUserLimit) {
+        throw new BadRequestException(
+          `该优惠券每人限领 ${coupon.perUserLimit} 张，您已领取 ${claimedCount} 张`,
+        );
+      }
+
+      // 原子操作：扣减库存 + 创建领用记录
+      await manager.decrement(
+        Coupon,
+        { id: couponId },
+        'remainingQuantity',
+        1,
       );
-    }
 
-    // 原子操作：扣减库存 + 创建领用记录
-    await this.couponRepository.decrement({ id: couponId }, 'remainingQuantity', 1);
+      const userCoupon = manager.create(UserCoupon, {
+        user: { id: userId },
+        coupon: { id: couponId },
+        status: UserCouponStatus.Unused,
+      });
 
-    const userCoupon = this.userCouponRepository.create({
-      user: { id: userId },
-      coupon: { id: couponId },
-      status: UserCouponStatus.Unused,
+      const saved = await manager.save(userCoupon);
+
+      // 重新加载带关联的数据并返回
+      return manager.findOneOrFail(UserCoupon, {
+        where: { id: saved.id },
+        relations: { coupon: true },
+      });
     });
-
-    const saved = await this.userCouponRepository.save(userCoupon);
-    const result = await this.userCouponRepository.findOne({
-      where: { id: saved.id },
-      relations: { coupon: true },
-    });
-    return result!;
   }
 
   /**
@@ -181,8 +210,8 @@ export class CouponService {
       throw new BadRequestException('该优惠券已过期');
     }
 
-    // 校验最低消费
-    if (totalAmount < coupon.minAmount) {
+    // 校验最低消费（totalAmount 为 0 时仅做存在性校验，不做门槛检查）
+    if (totalAmount > 0 && totalAmount < coupon.minAmount) {
       throw new BadRequestException(
         `未达到优惠券使用门槛（满 ¥${coupon.minAmount} 可用，当前 ¥${totalAmount}）`,
       );
@@ -194,7 +223,9 @@ export class CouponService {
       discount = Number(coupon.discountValue);
     } else {
       // 折扣券：折扣金额 = 总金额 * (1 - 折扣率)，不超过 maxDiscount
-      discount = Number((totalAmount * (1 - coupon.discountValue)).toFixed(2));
+      discount = Number(
+        (totalAmount * (1 - coupon.discountValue)).toFixed(2),
+      );
       if (coupon.maxDiscount && discount > Number(coupon.maxDiscount)) {
         discount = Number(coupon.maxDiscount);
       }
@@ -223,7 +254,13 @@ export class CouponService {
       take: limit,
     });
 
-    return { list, total, page, limit, totalPages: Math.ceil(total / limit) };
+    return {
+      list,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
   }
 
   async adminFindOne(id: number): Promise<Coupon> {
@@ -233,26 +270,28 @@ export class CouponService {
   }
 
   async create(dto: CreateCouponDto): Promise<Coupon> {
-    const coupon = this.couponRepository.create({
+    const data: DeepPartial<Coupon> = {
       name: dto.name,
       type: dto.type,
-      minAmount: dto.minAmount,
-      discountValue: dto.discountValue,
-      maxDiscount: dto.maxDiscount ?? null,
-      totalQuantity: dto.totalQuantity,
-      remainingQuantity: dto.totalQuantity,
-      perUserLimit: dto.perUserLimit ?? 1,
-      startDate: dto.startDate ? new Date(dto.startDate) : null,
-      endDate: dto.endDate ? new Date(dto.endDate) : null,
+      minAmount: Number(dto.minAmount),
+      discountValue: Number(dto.discountValue),
+      maxDiscount: dto.maxDiscount ? Number(dto.maxDiscount) : undefined,
+      totalQuantity: Number(dto.totalQuantity),
+      remainingQuantity: Number(dto.totalQuantity),
+      perUserLimit: dto.perUserLimit ? Number(dto.perUserLimit) : undefined,
+      startDate: dto.startDate ? new Date(dto.startDate) : undefined,
+      endDate: dto.endDate ? new Date(dto.endDate) : undefined,
       isActive: dto.isActive ?? true,
-    } as unknown as Coupon);
+    };
+    const coupon = this.couponRepository.create(data);
     return this.couponRepository.save(coupon);
   }
 
   async update(id: number, dto: UpdateCouponDto): Promise<Coupon> {
     const coupon = await this.adminFindOne(id);
 
-    if (dto.type && dto.type !== coupon.type) {
+    // 显式检查 type 是否变更（undefined 表示未传）
+    if (dto.type !== undefined && dto.type !== coupon.type) {
       throw new BadRequestException('优惠券类型不可修改');
     }
 
