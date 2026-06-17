@@ -2,6 +2,7 @@ import { Entity, Column, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
 import { BaseEntity } from '../../../common/base.entity';
 import { User } from '../../user/entities/user.entity';
 import { OrderItem } from './order-item.entity';
+import { UserCoupon } from '../../coupon/entities/user-coupon.entity';
 
 /**
  * 订单状态枚举
@@ -93,4 +94,11 @@ export class Order extends BaseEntity {
     eager: true,
   })
   items: OrderItem[];
+
+  /**
+   * 使用的优惠券（多对一，可为空）
+   */
+  @ManyToOne(() => UserCoupon, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'user_coupon_id' })
+  userCoupon: UserCoupon;
 }

@@ -8,7 +8,9 @@ import { Repository, DataSource, FindOptionsWhere, FindOptionsRelations } from '
 import { Order, OrderStatus } from './entities/order.entity';
 import { Product } from '../product/entities/product.entity';
 import { CartItem } from './entities/cart-item.entity';
+import { UserCoupon, UserCouponStatus } from '../coupon/entities/user-coupon.entity';
 import { CartService } from './cart.service';
+import { CouponService } from '../coupon/coupon.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { QueryOrderDto } from './dto/query-order.dto';
 
@@ -35,6 +37,7 @@ export class OrderService {
     @InjectRepository(Product)
     private readonly productRepository: Repository<Product>,
     private readonly cartService: CartService,
+    private readonly couponService: CouponService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -42,7 +45,7 @@ export class OrderService {
    * 创建订单 — 从购物车已选中商品结算（事务保护）
    */
   async create(userId: number, dto: CreateOrderDto): Promise<Order> {
-    const { receiverName, receiverPhone, receiverAddress, remark } = dto;
+    const { receiverName, receiverPhone, receiverAddress, remark, userCouponId } = dto;
 
     // 1. 获取已选中购物车项
     const cartItems = await this.cartService.findSelectedByUser(userId);
@@ -87,23 +90,40 @@ export class OrderService {
       });
     }
 
-    // 3. 生成订单编号
+    // 3. 优惠券校验与计算
+    let couponDiscount = 0;
+    let couponToUse: UserCoupon | null = null;
+
+    if (userCouponId) {
+      const result = await this.couponService.validateAndUse(
+        userId,
+        userCouponId,
+        totalAmount,
+      );
+      couponDiscount = result.discount;
+      couponToUse = result.userCoupon;
+    }
+
+    const payAmount = Number((totalAmount - couponDiscount).toFixed(2));
+
+    // 4. 生成订单编号
     const orderNo = generateOrderNo();
 
-    // 4. 创建订单实体
+    // 5. 创建订单实体
     // TypeORM create() 搭配嵌套 relations 时类型推断有限，需类型断言
     const order = this.orderRepository.create({
       orderNo,
       status: OrderStatus.PendingPayment,
       totalAmount,
       freight: 0,
-      couponDiscount: 0,
-      payAmount: totalAmount,
+      couponDiscount,
+      payAmount,
       receiverName,
       receiverPhone,
       receiverAddress,
       remark: remark ?? null,
       user: { id: userId },
+      userCoupon: couponToUse ? { id: couponToUse.id } : null,
       items: orderItemsData.map((item) => ({
         productName: item.productName,
         productImage: item.productImage,
@@ -114,7 +134,7 @@ export class OrderService {
       })),
     } as unknown as Order);
 
-    // 5. 事务内：保存订单 → 扣减库存 → 清空购物车
+    // 6. 事务内：保存订单 → 扣减库存 → 标记优惠券已用 → 清空购物车
     const cartItemIds = cartItems.map((ci) => ci.id);
     const savedOrder = await this.dataSource.transaction(async (manager) => {
       const saved = await manager.save(order);
@@ -134,6 +154,19 @@ export class OrderService {
         );
       }
 
+      // 标记优惠券已使用
+      if (couponToUse) {
+        await manager.update(
+          UserCoupon,
+          { id: couponToUse.id },
+          {
+            status: UserCouponStatus.Used,
+            usedAt: new Date(),
+            order: { id: saved.id },
+          },
+        );
+      }
+
       if (cartItemIds.length > 0) {
         await manager.delete(CartItem, cartItemIds);
       }
@@ -141,7 +174,7 @@ export class OrderService {
       return saved;
     });
 
-    // 6. 返回完整订单详情
+    // 7. 返回完整订单详情
     return this.findOne(savedOrder.id);
   }
 

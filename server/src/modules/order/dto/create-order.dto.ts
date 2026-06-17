@@ -1,4 +1,4 @@
-import { IsString, MaxLength, IsOptional } from 'class-validator';
+import { IsString, MaxLength, IsOptional, IsInt, IsPositive } from 'class-validator';
 
 /**
  * 创建订单 DTO（从购物车结算）
@@ -20,4 +20,9 @@ export class CreateOrderDto {
   @IsString({ message: '备注必须是字符串' })
   @MaxLength(500, { message: '备注最多 500 个字符' })
   remark?: string;
+
+  @IsOptional()
+  @IsInt({ message: '优惠券 ID 必须是整数' })
+  @IsPositive({ message: '优惠券 ID 必须为正数' })
+  userCouponId?: number;
 }

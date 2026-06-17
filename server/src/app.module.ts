@@ -11,6 +11,7 @@ import { CategoryModule } from './modules/category/category.module';
 import { ProductModule } from './modules/product/product.module';
 import { OrderModule } from './modules/order/order.module';
 import { FavoriteModule } from './modules/favorite/favorite.module';
+import { CouponModule } from './modules/coupon/coupon.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { FavoriteModule } from './modules/favorite/favorite.module';
     ProductModule,
     OrderModule,
     FavoriteModule,
+    CouponModule,
 
     // ===== 环境变量配置（全局可用） =====
     ConfigModule.forRoot({
