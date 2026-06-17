@@ -48,6 +48,7 @@ export class ProductService {
     const {
       keyword,
       categoryId,
+      isFeatured,
       sortBy = 'createdAt',
       sortOrder = 'DESC',
       page = 1,
@@ -60,6 +61,11 @@ export class ProductService {
     // 按分类筛选
     if (categoryId) {
       baseWhere.category = { id: categoryId };
+    }
+
+    // 按精选标记筛选
+    if (isFeatured === 'true') {
+      baseWhere.isFeatured = true;
     }
 
     // 关键词搜索

@@ -49,6 +49,10 @@ import { AdminModule } from './modules/admin/admin.module';
         synchronize: true, // 开发环境自动同步表结构，生产环境请改为 false
         logging: true,
         timezone: '+08:00',
+        charset: 'utf8mb4',
+        extra: {
+          charset: 'utf8mb4_unicode_ci',
+        },
       }),
     }),
 

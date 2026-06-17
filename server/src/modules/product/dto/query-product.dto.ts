@@ -34,4 +34,8 @@ export class QueryProductDto {
   @Max(100, { message: '每页最多 100 条' })
   @Type(() => Number)
   limit?: number;
+
+  @IsOptional()
+  @IsString({ message: 'isFeatured 参数格式错误' })
+  isFeatured?: string;
 }
